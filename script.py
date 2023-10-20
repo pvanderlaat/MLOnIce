@@ -181,29 +181,20 @@ def makeEntries(team):
 def getTeamsForThisYear(season):
     # Make API call to get all team ids for this season
     url = 'https://statsapi.web.nhl.com/api/v1/teams?expand=team.roster&season=' + season
+    
+    # Note about team ids:
+        # Team ids are unique across the NHL history.
+        # For example:
+            # The year 20102011 contains a team id of 11 (Atlanta Thrashers)
+            # The year 20222023 does not contain team 11 since the team was sold in 2011 
     try:
-        # Send an HTTP GET request to the API
         response = requests.get(url)
-
-        # Check if the request was successful (status code 200)
         if response.status_code == 200:
-            # Parse the JSON response
             data = response.json()
-
-            # Access and print the results
-            teams = data["teams"]
-            for team in teams:
-                team_id = team["id"]
-                team_name = team["name"]
-                roster = team["roster"]["roster"]
-
-                print(f"Team ID: {team_id}")
-                print(f"Team Name: {team_name}")
-                print("Roster:")
-                for player in roster:
-                    player_name = f"{player['person']['firstName']} {player['person']['lastName']}"
-                    print(f"- {player_name}")
-
+            res = []
+            for team in data["teams"]:
+                res.append(team['id'])
+            return res
         else:
             print(f"Failed to fetch data. Status code: {response.status_code}")
 
@@ -219,11 +210,22 @@ def getGames(team, season):
     # Collect all gameIds, and update team.games
     pass
 
-# years = [20002001, ..., 20222023]
-seasons = ['20142015']
+
+def generate_seasons(start_year=2000, end_year=2021):
+    seasons = []
+    for year in range(start_year, end_year + 2):
+        season_start = str(year)
+        season_end = str(year + 1)
+        season = season_start + season_end
+        seasons.append(season)
+
+    return seasons
+
+seasons = generate_seasons(2000, 2021)
 for season in seasons:
     teams = getTeamsForThisYear(season)
-    # for team in teams:
+    for team in teams:
+        print(team)
     #     team = TeamSeasonStat(team.id)
     #     getGames(team, season)
     #     storeStats(team)
