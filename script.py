@@ -1,5 +1,5 @@
 import requests
-
+import mongo
 # a = game h/a
 # b = team's winning/losing streak
 # c = player position (F/D)
@@ -70,6 +70,20 @@ class TeamSeasonStat:
         
         return sum/10
 
+def makeRequest(url):
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            return response.json()
+        else:
+            print(f"Failed to fetch data. Status code: {response.status_code}")
+
+    except requests.exceptions.RequestException as e:
+        print(f"Request error: {e}")
+    except KeyError:
+        print("Error: JSON structure does not match expectations")
+    # return array of ids
+    exit()
 # Mongo v2 document model
 
 # teamId
@@ -111,9 +125,12 @@ def makeEntry(team):
         # Make an entry
 
 def storeStats(team):
-    for i in range(len(team.games)):
-        gameId = team.games[i]
+    for i, gameId in enumerate(team.games):
+        # print(gameId)
+        x = 3
         # Do API call for gameId
+        url = "https://statsapi.web.nhl.com/api/v1/game/" + str(gameId) + "/boxscore"
+        gameObj = makeRequest(url)
 
         # Check game h/a for given team.id
         # Check if game is win/loss for given team.id
@@ -181,6 +198,7 @@ def makeEntries(team):
 def getTeamsForThisYear(season):
     # Make API call to get all team ids for this season
     url = 'https://statsapi.web.nhl.com/api/v1/teams?expand=team.roster&season=' + season
+    data = makeRequest(url)
     
     # Note about team ids:
         # Team ids are unique across the NHL history.
@@ -188,27 +206,24 @@ def getTeamsForThisYear(season):
             # The year 20102011 contains a team id of 11 (Atlanta Thrashers)
             # The year 20222023 does not contain team 11 since the team was sold in 2011 
     try:
-        response = requests.get(url)
-        if response.status_code == 200:
-            data = response.json()
-            res = []
-            for team in data["teams"]:
-                res.append(team['id'])
-            return res
-        else:
-            print(f"Failed to fetch data. Status code: {response.status_code}")
-
-    except requests.exceptions.RequestException as e:
-        print(f"Request error: {e}")
+        res = []
+        for team in data["teams"]:
+            res.append(team['id'])
+        # return array of ids
+        return res
     except KeyError:
         print("Error: JSON structure does not match expectations")
-    # return array of ids
-    pass
+    exit()
 
-def getGames(team, season):
+def getGames(team):
     # Make API call to get schedule of given team during given season (only regular games)
+    url = "https://statsapi.web.nhl.com/api/v1/schedule?season=" + team.season + "&expand=schedule.linescore&teamId=" + str(team.id) + "&gameType=R"
+    data = makeRequest(url)
     # Collect all gameIds, and update team.games
-    pass
+    for date in data["dates"]:
+        for game in date["games"]:
+            # print(game["gamePk"])
+            team.games.append(game["gamePk"])
 
 
 def generate_seasons(start_year=2000, end_year=2021):
@@ -221,12 +236,21 @@ def generate_seasons(start_year=2000, end_year=2021):
 
     return seasons
 
+# db = mongo.DB()
+# Notes: 
+# - I ran what I have for this script so far to estimate the time needed for completion.
+# - The first season took ~5.5 minutes.
+# - This would mean our entire script would need AT LEAST ~115 minutes (2 hrs)
+#   - (These 105 minutes are not including db entries)
 seasons = generate_seasons(2000, 2021)
 for season in seasons:
-    teams = getTeamsForThisYear(season)
-    for team in teams:
-        print(team)
-    #     team = TeamSeasonStat(team.id)
-    #     getGames(team, season)
-    #     storeStats(team)
+    teamIDs = getTeamsForThisYear(season)
+    for teamID in teamIDs:
+        testTeam = teamID
+        team = TeamSeasonStat(teamID, season)
+        getGames(team)
+        storeStats(team)
+        print(teamID)
     #     makeEntries(team)
+    print("Finished season " + season)
+print("done")
