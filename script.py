@@ -1,5 +1,6 @@
 import requests
 import mongo
+from datetime import datetime
 # a = game h/a
 # b = team's winning/losing streak
 # c = player position (F/D)
@@ -236,7 +237,14 @@ def generate_seasons(start_year=2000, end_year=2021):
 
     return seasons
 
-# db = mongo.DB()
+
+now = datetime.now()
+
+current_time = now.strftime("%H:%M:%S")
+print("Current Time =", current_time)
+
+
+db = mongo.DB()
 # Notes: 
 # - I ran what I have for this script so far to estimate the time needed for completion.
 # - The first season took ~5.5 minutes.
@@ -250,7 +258,10 @@ for season in seasons:
         team = TeamSeasonStat(teamID, season)
         getGames(team)
         storeStats(team)
-        print(teamID)
     #     makeEntries(team)
     print("Finished season " + season)
 print("done")
+
+now = datetime.now()
+current_time = now.strftime("%H:%M:%S")
+print("Current Time =", current_time)
