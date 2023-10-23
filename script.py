@@ -28,7 +28,7 @@ class TeamSeasonStat:
         self.win_loss = []
         
         #maps game-id to whether that game is a home or away for this team
-        self.home_or_away = {}
+        self.is_home = {}
 
         #maps game-id to opponent id
         self.opps = {}
@@ -100,13 +100,15 @@ def getOpponentStats(oppId, season, gameCount):
     #     season,
     #     # filter gameCount < gameCount
     # })
+    filter_query = {"teamID": oppId, "season": season, "gameCount": {"$lt": gameCount}}
+    documents = list(db.find("Ops", filter_query))
 
     avgGoalsAllowed = 0
     avgPenalties = 0
     
-    for document in enumerate(documents):
-        avgGoalsAllowed += document.goalsAllowed
-        avgPenalties += documents.penalties
+    for document in documents:
+        avgGoalsAllowed += document["goalsAllowed"]
+        avgPenalties += document["penalties"]
 
     avgGoalsAllowed = avgGoalsAllowed / len(documents)
     avgPenalties = avgPenalties / len(documents)
@@ -126,29 +128,52 @@ def makeEntry(team):
         # Make an entry
 
 def storeStats(team):
-    for i, gameId in enumerate(team.games):
-        # print(gameId)
-        x = 3
+    for gameId in team.games:
         # Do API call for gameId
         url = "https://statsapi.web.nhl.com/api/v1/game/" + str(gameId) + "/boxscore"
         gameObj = makeRequest(url)
 
-        # Check game h/a for given team.id
-        # Check if game is win/loss for given team.id
-        # Check opponent id for given team.id
+        # Check game h/a for given team.id + win_loss
+            # done below
+            # done below
+
+        team_status = "home" if team.is_home[gameId] == "home" else "away"
 
         # Iterate though players in roster[team.id]
-        # if (player.id not in team.players)
-            # Add player. Set age and position
-        # enter player stats (goals, assists, toi, +/-, power play points) 
+        for _, player in gameObj["teams"][team_status]["players"].items():
+            player_id = player["person"]["id"]
+            # player_id = gameObj["teams"][team_status]["players"][player]
+            
+            # Don't use goalies
+            currPosition = player["person"]["primaryPosition"]["type"]
+            if (currPosition != "Forward" or currPosition != "Defenseman"):
+                continue
+            
+            if player_id not in team.players:
+                team.players.append(player_id)
+                team.player_age[player_id] = player["person"]["currentAge"]
+                team.position[player_id] = currPosition
+
+            # enter player stats (goals, assists, toi, +/-, power play points)
+            skaterStats = player["stats"]["skaterStats"]
+
+            # goals, assits, toi, +/-
+            team.goals[(player_id, gameId)] = skaterStats["goals"]
+            team.assists[(player_id, gameId)] = skaterStats["assists"]
+            toiSplit = skaterStats["timeOnIce"].split(":")
+            team.toi[(player_id, gameId)] = int(toiSplit[0]) * 60 + int(toiSplit[1])
+            team.plus_minus[(player_id, gameId)] = skaterStats["plusMinus"]
+            team.pow_play_points = skaterStats["powerPlayAssists"] + skaterStats["powerPlayGoals"]
 
 def makeEntries(team):
     # Iterate from index 10 to end of team.games
     
     # For each game id
     for i, g in enumerate(team.games):
+        if i < 10:
+            continue
         # Create variables for (homeOrAway, WinningLosingStreak, oppId)
-        homeOrAway = team.home_or_away[g]
+        homeOrAway = team.is_home[g]
         winLossStreak = team.win_loss[i]
         oppId = team.opps[g]
         avgOppGoalsAllowed, avgOppPenalties = getOpponentStats(oppId, team.season, i + 1)
@@ -224,12 +249,43 @@ def getGames(team):
     for date in data["dates"]:
         for game in date["games"]:
             # print(game["gamePk"])
-            team.games.append(game["gamePk"])
+            gameId = game["gamePk"]
+            team.games.append(gameId)
+            
+            # Check opponent id for given team.id
+            team.is_home[gameId] = game["teams"]["home"]["team"]["id"] == team.id
+            team_status = ""
+            opp_status = ""
+            if team.is_home[gameId]:
+                team_status = "home"
+                opp_status = "away"
+            else:
+                team_status = "away"
+                opp_status = "home"
+            
+            # Check if game is win/loss for given team.id. Also, store opp_id
+            did_team_win = game["teams"][team_status]["score"] > game["teams"][opp_status]["score"]
+            team.opps[gameId] = game["teams"][opp_status]["team"]["id"]
+            if (len(team.win_loss) > 0):
+                # Win during win streak. ++
+                # Loss during win streak. -1
+                # Win during lose streak. 1
+                # Loss during lose streak. --
+                lastStreak = team.win_loss[-1]
+                if did_team_win:
+                    team.win_loss.append((lastStreak + 1 )if lastStreak > 0 else 1)
+                else:
+                    team.win_loss.append((lastStreak - 1)if lastStreak < 0 else -1)
+            else:
+                team.win_loss.append(1 if did_team_win else -1)
+                
+            
+                
 
 
-def generate_seasons(start_year=2000, end_year=2021):
+def generate_seasons(start_year=2000, end_year=2023):
     seasons = []
-    for year in range(start_year, end_year + 2):
+    for year in range(start_year, end_year):
         season_start = str(year)
         season_end = str(year + 1)
         season = season_start + season_end
@@ -250,7 +306,7 @@ db = mongo.DB()
 # - The first season took ~5.5 minutes.
 # - This would mean our entire script would need AT LEAST ~115 minutes (2 hrs)
 #   - (These 105 minutes are not including db entries)
-seasons = generate_seasons(2000, 2021)
+seasons = generate_seasons(2000, 2023)
 for season in seasons:
     teamIDs = getTeamsForThisYear(season)
     for teamID in teamIDs:
@@ -258,7 +314,7 @@ for season in seasons:
         team = TeamSeasonStat(teamID, season)
         getGames(team)
         storeStats(team)
-    #     makeEntries(team)
+        makeEntries(team)
     print("Finished season " + season)
 print("done")
 
