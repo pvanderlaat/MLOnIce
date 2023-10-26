@@ -124,7 +124,10 @@ def storeStats(team):
             currPosition = player["person"]["primaryPosition"]["type"]
             if (currPosition != "Forward" and currPosition != "Defenseman"):
                 continue
-            
+
+            # Some skaterstats have the issue of having an empty skaterstats 
+            if (len(list(player["stats"].items())) == 0):
+                continue
             if player_id not in team.players:
                 team.players.append(player_id)
                 team.player_age[player_id] = int(team.season[0:4]) - int(player["person"]["birthDate"][0:4])
@@ -202,7 +205,7 @@ def makeEntries(team):
                 "actualAssists": actualAssists
             }
             
-            db.insert("Entries", document)
+            db.insert("Entries (skaterStat Fix)", document)
 
 def getTeamsForThisYear(season):
     # Make API call to get all team ids for this season
