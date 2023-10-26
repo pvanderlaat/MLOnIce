@@ -1,6 +1,7 @@
 import requests
 import mongo
 from datetime import datetime
+import threading
 # a = game h/a
 # b = team's winning/losing streak
 # c = player position (F/D)
@@ -36,8 +37,11 @@ class TeamSeasonStat:
         #maps player-id to that player's age
         self.player_age = {}
         
-        #maps (player-id, game_id) tuple to the player's position in that game
+        #maps (player-id) to the player's position
         self.position = {}
+
+         #maps player-id tuple to the player's name
+        self.name_season = {}
         
         #maps (player-id, game_id) tuple to the player#'s TOI in that game
         self.toi = {}
@@ -56,7 +60,7 @@ class TeamSeasonStat:
         
     #Returns the average for the last 10 games before the specidied game
     #Returns None if that player did not play for more than 10 games
-    def get_last_10_average(self,i, fn):
+    def get_last_10_average(self, i, fn):
         if (i < 10):
             return None
 
@@ -85,21 +89,9 @@ def makeRequest(url):
         print("Error: JSON structure does not match expectations")
     # return array of ids
     exit()
-# Mongo v2 document model
 
-# teamId
-# penalties
-# goalsAllowed
-# season (ex: 20172018, 20052006)
-# gameCount
 
 def getOpponentStats(oppId, season, gameCount):
-    # Figure out how to connect to Mongo
-    # documents =  mongoDB.findAll({
-    #     teamId: oppId,
-    #     season,
-    #     # filter gameCount < gameCount
-    # })
     filter_query = {"teamID": oppId, "season": season, "gameCount": {"$lt": gameCount}}
     documents = list(db.find("Ops", filter_query))
 
@@ -115,44 +107,29 @@ def getOpponentStats(oppId, season, gameCount):
 
     return avgGoalsAllowed, avgPenalties
 
-
-def makeEntry(team):
-    for player in team.players:
-        # player avg goal
-        avgGoals = 0
-        for goals in player.goals[:10]:
-            avgGoals += goals
-        avgGoals = avgGoals / 10
-        
-        # Calculate rest of values
-        # Make an entry
-
 def storeStats(team):
     for gameId in team.games:
         # Do API call for gameId
         url = "https://statsapi.web.nhl.com/api/v1/game/" + str(gameId) + "/boxscore"
         gameObj = makeRequest(url)
 
-        # Check game h/a for given team.id + win_loss
-            # done below
-            # done below
-
-        team_status = "home" if team.is_home[gameId] == "home" else "away"
+        team_status = "home" if team.is_home[gameId] else "away"
 
         # Iterate though players in roster[team.id]
         for _, player in gameObj["teams"][team_status]["players"].items():
             player_id = player["person"]["id"]
-            # player_id = gameObj["teams"][team_status]["players"][player]
-            
+            player_name_season = player["person"]["fullName"] + " " + team.season
+        
             # Don't use goalies
             currPosition = player["person"]["primaryPosition"]["type"]
-            if (currPosition != "Forward" or currPosition != "Defenseman"):
+            if (currPosition != "Forward" and currPosition != "Defenseman"):
                 continue
             
             if player_id not in team.players:
                 team.players.append(player_id)
-                team.player_age[player_id] = player["person"]["currentAge"]
+                team.player_age[player_id] = int(team.season[0:4]) - int(player["person"]["birthDate"][0:4])
                 team.position[player_id] = currPosition
+                team.name_season[player_id] = player_name_season
 
             # enter player stats (goals, assists, toi, +/-, power play points)
             skaterStats = player["stats"]["skaterStats"]
@@ -163,7 +140,8 @@ def storeStats(team):
             toiSplit = skaterStats["timeOnIce"].split(":")
             team.toi[(player_id, gameId)] = int(toiSplit[0]) * 60 + int(toiSplit[1])
             team.plus_minus[(player_id, gameId)] = skaterStats["plusMinus"]
-            team.pow_play_points = skaterStats["powerPlayAssists"] + skaterStats["powerPlayGoals"]
+            team.pow_play_points[(player_id, gameId)] = skaterStats["powerPlayAssists"] + skaterStats["powerPlayGoals"]
+
 
 def makeEntries(team):
     # Iterate from index 10 to end of team.games
@@ -173,53 +151,58 @@ def makeEntries(team):
         if i < 10:
             continue
         # Create variables for (homeOrAway, WinningLosingStreak, oppId)
-        homeOrAway = team.is_home[g]
+        isHome = team.is_home[g]
         winLossStreak = team.win_loss[i]
         oppId = team.opps[g]
         avgOppGoalsAllowed, avgOppPenalties = getOpponentStats(oppId, team.season, i + 1)
         
         # For each player
         # Create variables for (avgGoals, avgAssists, avgTOI, avgPlusMinus, avgPowerPlay, ) i
-        for p in team.player:
-            avgGoals = team.get_last_10_average(i, lambda g_: team.goals[(p, g_)])
+        for _, p in enumerate(team.players):
+            actualGoals = team.goals.get((p,g))
+            actualAssists = team.assists.get((p,g))
+            
+            if actualGoals == None or actualAssists == None: continue
+            
+            avgGoals = team.get_last_10_average(i, lambda g_: team.goals.get((p, g_)))
             if avgGoals == None:
                 continue
 
-            avgAssists = team.get_last_10_average(i, lambda g_: team.assists[(p, g_)])
+            avgAssists = team.get_last_10_average(i, lambda g_: team.assists.get((p, g_)))
             if avgAssists == None:
                 continue
 
-            avgTOI = team.get_last_10_average(i, lambda g_: team.toi[(p, g_)])
+            avgTOI = team.get_last_10_average(i, lambda g_: team.toi.get((p, g_)))
             if avgTOI == None:
                 continue
 
-            avgPlusMinus = team.get_last_10_average(i, lambda g_: team.plus_minus[(p, g_)])
+            avgPlusMinus = team.get_last_10_average(i, lambda g_: team.plus_minus.get((p, g_)))
             if avgPlusMinus == None:
                 continue
 
-            avgPowerPlay = team.get_last_10_average(i, lambda g_: team.assists[(p, g_)])
+            avgPowerPlay = team.get_last_10_average(i, lambda g_: team.pow_play_points.get((p, g_)))
             if avgPowerPlay == None:
                 continue
 
             powPlayGoalProb = avgPowerPlay * avgOppPenalties
-            actualGoals = teams.goals[(p,g)]
-            actualAssists = teams.assists[(p,g)]
+
+            document = {
+                "playerNameSeason": team.name_season[p],
+                "playerAge": team.player_age[p],
+                "playerPosition": team.position[p],
+                "avgGoals": avgGoals,
+                "avgAssists": avgAssists,
+                "avgTOI": avgTOI,
+                "avgPlusMinus": avgPlusMinus,
+                "powPlayGoalProb": powPlayGoalProb,
+                "isHome": isHome,
+                "winLossStreak": winLossStreak,
+                "avgOppGoalsAllowed": avgOppGoalsAllowed,
+                "actualGoals": actualGoals,
+                "actualAssists": actualAssists
+            }
             
-            # make entry
-            mongoDB.create(
-                homeOrAway, 
-                winLossStreak, 
-                team.player_age[p],
-                team.position[p],
-                avgGoals, 
-                avgAssists, 
-                avgTOI, 
-                avgPlusMinus, 
-                powPlayGoalProb,
-                avgOppGoalsAllowed,
-                actualGoals,
-                actualAssists
-            )
+            db.insert("Entries", document)
 
 def getTeamsForThisYear(season):
     # Make API call to get all team ids for this season
@@ -248,7 +231,6 @@ def getGames(team):
     # Collect all gameIds, and update team.games
     for date in data["dates"]:
         for game in date["games"]:
-            # print(game["gamePk"])
             gameId = game["gamePk"]
             team.games.append(gameId)
             
@@ -278,10 +260,12 @@ def getGames(team):
                     team.win_loss.append((lastStreak - 1)if lastStreak < 0 else -1)
             else:
                 team.win_loss.append(1 if did_team_win else -1)
-                
             
-                
-
+def calcStats(teamID, season):
+    team = TeamSeasonStat(teamID, season)
+    getGames(team)
+    storeStats(team)
+    makeEntries(team)
 
 def generate_seasons(start_year=2000, end_year=2023):
     seasons = []
@@ -301,22 +285,19 @@ print("Current Time =", current_time)
 
 
 db = mongo.DB()
-# Notes: 
-# - I ran what I have for this script so far to estimate the time needed for completion.
-# - The first season took ~5.5 minutes.
-# - This would mean our entire script would need AT LEAST ~115 minutes (2 hrs)
-#   - (These 105 minutes are not including db entries)
 seasons = generate_seasons(2000, 2023)
 for season in seasons:
     teamIDs = getTeamsForThisYear(season)
+    threads = []
     for teamID in teamIDs:
-        testTeam = teamID
-        team = TeamSeasonStat(teamID, season)
-        getGames(team)
-        storeStats(team)
-        makeEntries(team)
+        thread = threading.Thread(target=calcStats, args=(teamID, season))
+        threads.append(thread)
+        thread.start()
+
+    for thread in threads:
+        thread.join()
+    
     print("Finished season " + season)
-print("done")
 
 now = datetime.now()
 current_time = now.strftime("%H:%M:%S")
